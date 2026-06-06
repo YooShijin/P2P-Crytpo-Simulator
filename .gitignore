@@ -1,0 +1,6 @@
+simulator
+*.o
+output/*.txt
+output/*.dot
+*.png
+.vscode/
