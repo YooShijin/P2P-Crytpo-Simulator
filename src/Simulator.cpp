@@ -97,15 +97,71 @@ void Simulator::scheduleInitialEvents()
     }
 }
 
-// Nothing is created yet, this only keeps the queue alive so the loop can be
-// tested on its own.
+void Simulator::broadcastTransaction(NodeId origin, NodeId skip, const Transaction &txn)
+{
+    for (NodeId peer : network.peersOf(origin))
+    {
+        if (peer == skip)
+        {
+            continue;
+        }
+        long long bits = 8000;
+        double delay = network.latency(nodes[origin], nodes[peer], bits, random);
+        Event event;
+        event.type = EventType::ReceiveTransaction;
+        event.nodeId = peer;
+        event.fromNode = origin;
+        event.txn = txn;
+        event.time = currentTime + delay;
+        push(event);
+    }
+}
+
 void Simulator::handleGenerateTransaction(const Event &event)
 {
+    Node &node = nodes[event.nodeId];
+
+    std::map<NodeId, long long> balances = node.balancesAt(node.longestTip);
+    long long balance = balances.count(node.id) > 0 ? balances[node.id] : 0;
+
+    if (balance >= 1 && config.numNodes >= 2)
+    {
+        NodeId receiver = node.id;
+        while (receiver == node.id)
+        {
+            receiver = random.uniformInt(0, config.numNodes - 1);
+        }
+        long long cap = std::min<long long>(balance, 1000000000LL);
+        long long amount = random.uniformInt(1, static_cast<int>(cap));
+
+        Transaction txn;
+        txn.id = nextTxnId;
+        nextTxnId = nextTxnId + 1;
+        txn.sender = node.id;
+        txn.receiver = receiver;
+        txn.coins = amount;
+
+        node.rememberTxn(txn);
+        broadcastTransaction(node.id, -1, txn);
+    }
+
     Event next;
     next.type = EventType::GenerateTransaction;
-    next.nodeId = event.nodeId;
+    next.nodeId = node.id;
     next.time = currentTime + random.exponential(config.meanTransactionInterval);
     push(next);
+}
+
+// Anything seen before is dropped, that is what keeps forwarding loop free.
+void Simulator::handleReceiveTransaction(const Event &event)
+{
+    Node &node = nodes[event.nodeId];
+    if (node.hasSeenTxn(event.txn.id))
+    {
+        return;
+    }
+    node.rememberTxn(event.txn);
+    broadcastTransaction(event.nodeId, event.fromNode, event.txn);
 }
 
 void Simulator::run()
@@ -127,6 +183,9 @@ void Simulator::run()
         {
         case EventType::GenerateTransaction:
             handleGenerateTransaction(event);
+            break;
+        case EventType::ReceiveTransaction:
+            handleReceiveTransaction(event);
             break;
         default:
             break;

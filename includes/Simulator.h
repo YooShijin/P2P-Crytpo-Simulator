@@ -32,6 +32,9 @@ private:
     void push(const Event &event);
 
     void handleGenerateTransaction(const Event &event);
+    void handleReceiveTransaction(const Event &event);
+
+    void broadcastTransaction(NodeId origin, NodeId skip, const Transaction &txn);
 
 public:
     explicit Simulator(const Config &config);
