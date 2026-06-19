@@ -94,7 +94,63 @@ void Simulator::scheduleInitialEvents()
         txnEvent.nodeId = node.id;
         txnEvent.time = random.exponential(config.meanTransactionInterval);
         push(txnEvent);
+
+        startMining(node.id);
     }
+}
+
+void Simulator::startMining(NodeId minerId)
+{
+    Node &node = nodes[minerId];
+    BlockId tip = node.longestTip;
+
+    Block candidate;
+    candidate.id = nextBlockId;
+    nextBlockId = nextBlockId + 1;
+    candidate.parentId = tip;
+    candidate.miner = minerId;
+    candidate.height = node.tree[tip].height + 1;
+
+    Transaction coinbase;
+    coinbase.id = nextTxnId;
+    nextTxnId = nextTxnId + 1;
+    coinbase.isCoinbase = true;
+    coinbase.receiver = minerId;
+    coinbase.coins = 50;
+    candidate.txns.push_back(coinbase);
+
+    std::map<NodeId, long long> balances = node.balancesAt(tip);
+    std::set<TransactionId> inChain = node.txnIdsInChain(tip);
+
+    for (const auto &entry : node.txnPool)
+    {
+        if (static_cast<int>(candidate.txns.size()) >= 1000)
+        {
+            break;
+        }
+        const Transaction &txn = entry.second;
+        if (txn.isCoinbase || inChain.count(txn.id) > 0)
+        {
+            continue;
+        }
+        if (balances[txn.sender] >= txn.coins)
+        {
+            candidate.txns.push_back(txn);
+            balances[txn.sender] -= txn.coins;
+            balances[txn.receiver] += txn.coins;
+        }
+    }
+
+    double mean = config.meanBlockInterval / node.hashPower;
+    double miningTime = random.exponential(mean);
+
+    Event event;
+    event.type = EventType::MiningComplete;
+    event.nodeId = minerId;
+    event.time = currentTime + miningTime;
+    event.block = candidate;
+    event.minedOnTip = tip;
+    push(event);
 }
 
 void Simulator::broadcastTransaction(NodeId origin, NodeId skip, const Transaction &txn)
@@ -112,6 +168,25 @@ void Simulator::broadcastTransaction(NodeId origin, NodeId skip, const Transacti
         event.nodeId = peer;
         event.fromNode = origin;
         event.txn = txn;
+        event.time = currentTime + delay;
+        push(event);
+    }
+}
+
+void Simulator::broadcastBlock(NodeId origin, NodeId skip, const Block &block)
+{
+    for (NodeId peer : network.peersOf(origin))
+    {
+        if (peer == skip)
+        {
+            continue;
+        }
+        double delay = network.latency(nodes[origin], nodes[peer], block.sizeInBits(), random);
+        Event event;
+        event.type = EventType::ReceiveBlock;
+        event.nodeId = peer;
+        event.fromNode = origin;
+        event.block = block;
         event.time = currentTime + delay;
         push(event);
     }
@@ -152,7 +227,6 @@ void Simulator::handleGenerateTransaction(const Event &event)
     push(next);
 }
 
-// Anything seen before is dropped, that is what keeps forwarding loop free.
 void Simulator::handleReceiveTransaction(const Event &event)
 {
     Node &node = nodes[event.nodeId];
@@ -164,9 +238,79 @@ void Simulator::handleReceiveTransaction(const Event &event)
     broadcastTransaction(event.nodeId, event.fromNode, event.txn);
 }
 
+void Simulator::handleReceiveBlock(const Event &event)
+{
+    Node &node = nodes[event.nodeId];
+    Block block = event.block;
+
+    if (node.hasSeenBlock(block.id))
+    {
+        return;
+    }
+    node.seenBlocks.insert(block.id);
+    broadcastBlock(event.nodeId, event.fromNode, block);
+
+    std::vector<Block> ready;
+    ready.push_back(block);
+
+    while (!ready.empty())
+    {
+        Block current = ready.back();
+        ready.pop_back();
+
+        if (node.tree.count(current.parentId) == 0)
+        {
+            node.orphans[current.parentId].push_back(current);
+            continue;
+        }
+        if (!node.isValidBlock(current))
+        {
+            continue;
+        }
+
+        bool changed = node.addBlock(current, currentTime);
+        if (changed)
+        {
+            startMining(node.id);
+        }
+
+        auto waiting = node.orphans.find(current.id);
+        if (waiting != node.orphans.end())
+        {
+            for (const Block &child : waiting->second)
+            {
+                ready.push_back(child);
+            }
+            node.orphans.erase(waiting);
+        }
+    }
+}
+
+void Simulator::handleMiningComplete(const Event &event)
+{
+    Node &node = nodes[event.nodeId];
+
+    if (node.longestTip != event.minedOnTip)
+    {
+        return;
+    }
+
+    Block block = event.block;
+    if (!node.isValidBlock(block))
+    {
+        startMining(event.nodeId);
+        return;
+    }
+
+    minedByNode[event.nodeId] = minedByNode[event.nodeId] + 1;
+    node.addBlock(block, currentTime);
+    broadcastBlock(event.nodeId, -1, block);
+    startMining(event.nodeId);
+}
+
 void Simulator::run()
 {
-    long long handled = 0;
+    minedByNode.assign(config.numNodes, 0);
 
     while (!eventQueue.empty())
     {
@@ -177,7 +321,6 @@ void Simulator::run()
         }
         eventQueue.pop();
         currentTime = event.time;
-        handled = handled + 1;
 
         switch (event.type)
         {
@@ -187,11 +330,15 @@ void Simulator::run()
         case EventType::ReceiveTransaction:
             handleReceiveTransaction(event);
             break;
-        default:
+        case EventType::ReceiveBlock:
+            handleReceiveBlock(event);
+            break;
+        case EventType::MiningComplete:
+            handleMiningComplete(event);
             break;
         }
     }
 
-    std::cout << "Handled " << handled << " events, clock stopped at "
-              << currentTime << "s\n";
+    std::cout << "Done. Node 0 saw " << nodes[0].tree.size()
+              << " blocks, longest chain height " << nodes[0].longestHeight << "\n";
 }

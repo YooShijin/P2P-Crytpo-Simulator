@@ -27,14 +27,21 @@ private:
     int nextBlockId;
     Block genesis;
 
+    // Blocks each node mined and broadcast.
+    std::vector<int> minedByNode;
+
     void assignRolesAndHashPower();
     void scheduleInitialEvents();
     void push(const Event &event);
 
     void handleGenerateTransaction(const Event &event);
     void handleReceiveTransaction(const Event &event);
+    void handleReceiveBlock(const Event &event);
+    void handleMiningComplete(const Event &event);
 
     void broadcastTransaction(NodeId origin, NodeId skip, const Transaction &txn);
+    void broadcastBlock(NodeId origin, NodeId skip, const Block &block);
+    void startMining(NodeId minerId);
 
 public:
     explicit Simulator(const Config &config);
