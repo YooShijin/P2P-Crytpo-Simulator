@@ -8,9 +8,11 @@
 #include "Random.h"
 #include <vector>
 #include <queue>
+#include <string>
 
-// The engine. Holds the event queue, the nodes and the network, and hands out
-// transaction and block ids.
+// The engine. Holds the event queue, the nodes and the network, hands out
+// transaction and block ids, and at the end writes the tree files and the
+// summary.
 
 class Simulator
 {
@@ -42,6 +44,9 @@ private:
     void broadcastTransaction(NodeId origin, NodeId skip, const Transaction &txn);
     void broadcastBlock(NodeId origin, NodeId skip, const Block &block);
     void startMining(NodeId minerId);
+
+    void writeTreeFiles() const;
+    void printSummary() const;
 
 public:
     explicit Simulator(const Config &config);

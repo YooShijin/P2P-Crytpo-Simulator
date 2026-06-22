@@ -1,8 +1,10 @@
 #include "Simulator.h"
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <filesystem>
 
 Simulator::Simulator(const Config &config)
     : config(config),
@@ -339,6 +341,123 @@ void Simulator::run()
         }
     }
 
-    std::cout << "Done. Node 0 saw " << nodes[0].tree.size()
-              << " blocks, longest chain height " << nodes[0].longestHeight << "\n";
+    writeTreeFiles();
+    printSummary();
+}
+
+void Simulator::writeTreeFiles() const
+{
+    std::filesystem::create_directories("output");
+
+    for (const Node &node : nodes)
+    {
+        std::set<BlockId> longestChain;
+        BlockId walk = node.longestTip;
+        while (walk != -1 && node.tree.count(walk) > 0)
+        {
+            longestChain.insert(walk);
+            walk = node.tree.at(walk).parentId;
+        }
+
+        std::string filename = "output/node_" + std::to_string(node.id) + "_tree.txt";
+        std::ofstream file(filename);
+        file << "# Blockchain tree seen by node " << node.id << "\n";
+        file << "# columns: blockId parentId miner height arrivalTime numTxns sizeKB inLongestChain\n";
+
+        for (const auto &entry : node.tree)
+        {
+            const Block &block = entry.second;
+            int inChain = longestChain.count(block.id) > 0 ? 1 : 0;
+            file << block.id << " "
+                 << block.parentId << " "
+                 << block.miner << " "
+                 << block.height << " "
+                 << node.arrivalTime.at(block.id) << " "
+                 << block.txns.size() << " "
+                 << block.sizeInKB() << " "
+                 << inChain << "\n";
+        }
+        file.close();
+    }
+
+    const Node &sample = nodes[0];
+    std::ofstream dot("output/node_0_tree.dot");
+    dot << "digraph blockchain {\n";
+    dot << "  rankdir=LR;\n";
+    dot << "  node [shape=box, style=rounded];\n";
+    BlockId tip = sample.longestTip;
+    std::set<BlockId> longestChain;
+    while (tip != -1 && sample.tree.count(tip) > 0)
+    {
+        longestChain.insert(tip);
+        tip = sample.tree.at(tip).parentId;
+    }
+    for (const auto &entry : sample.tree)
+    {
+        const Block &block = entry.second;
+        std::string color = longestChain.count(block.id) > 0 ? "lightgreen" : "lightgrey";
+        dot << "  b" << block.id << " [label=\"Blk " << block.id
+            << "\\nminer " << block.miner << "\", style=\"rounded,filled\", fillcolor=" << color << "];\n";
+        if (block.parentId != -1)
+        {
+            dot << "  b" << block.parentId << " -> b" << block.id << ";\n";
+        }
+    }
+    dot << "}\n";
+    dot.close();
+}
+
+void Simulator::printSummary() const
+{
+    const Node &reference = nodes[0];
+
+    std::set<BlockId> longestChain;
+    BlockId walk = reference.longestTip;
+    while (walk != -1 && reference.tree.count(walk) > 0)
+    {
+        longestChain.insert(walk);
+        walk = reference.tree.at(walk).parentId;
+    }
+
+    std::vector<int> inChainByNode(config.numNodes, 0);
+    for (BlockId id : longestChain)
+    {
+        const Block &block = reference.tree.at(id);
+        if (block.miner >= 0)
+        {
+            inChainByNode[block.miner] = inChainByNode[block.miner] + 1;
+        }
+    }
+
+    std::cout << "\n=============== SIMULATION SUMMARY ===============\n";
+    std::cout << "Nodes: " << config.numNodes
+              << "   Slow%: " << config.slowPercentage
+              << "   LowCPU%: " << config.lowCpuPercentage << "\n";
+    std::cout << "Ttx: " << config.meanTransactionInterval
+              << "s   BlockInterval I: " << config.meanBlockInterval
+              << "s   Duration: " << config.simulationDuration << "s\n";
+    std::cout << "Total blocks in tree (node 0): " << reference.tree.size() << "\n";
+    std::cout << "Longest chain length (node 0): " << reference.longestHeight << "\n\n";
+
+    std::cout << "Per node (from node 0's view of the longest chain):\n";
+    std::cout << "id  speed  cpu   hashPower  mined  inChain  ratio\n";
+    for (const Node &node : nodes)
+    {
+        int mined = minedByNode[node.id];
+        int inChain = inChainByNode[node.id];
+        double ratio = mined > 0 ? static_cast<double>(inChain) / mined : 0.0;
+        std::cout << node.id << "   "
+                  << (node.isFast() ? "Fast" : "Slow") << "   "
+                  << (node.isHighCpu() ? "High" : "Low ") << "   "
+                  << node.hashPower << "   "
+                  << mined << "      "
+                  << inChain << "        "
+                  << ratio << "\n";
+    }
+
+    int offChain = static_cast<int>(reference.tree.size()) - static_cast<int>(longestChain.size());
+    std::cout << "\nBlocks off the longest chain (forks) at node 0: " << offChain << "\n";
+    std::cout << "Tree files written to the output/ folder.\n";
+    std::cout << "Visualize node 0 with:  dot -Tpng output/node_0_tree.dot -o tree.png\n";
+    std::cout << "=================================================\n";
 }
