@@ -33,6 +33,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (config.slowPercentage < 0.0 || config.slowPercentage > 100.0 ||
+        config.lowCpuPercentage < 0.0 || config.lowCpuPercentage > 100.0)
+    {
+        std::cout << "z0 and z1 have to be percentages between 0 and 100.\n";
+        return 1;
+    }
+
+    if (config.meanTransactionInterval <= 0.0 || config.meanBlockInterval <= 0.0 ||
+        config.simulationDuration <= 0.0)
+    {
+        std::cout << "Ttx, I and duration have to be greater than zero.\n";
+        return 1;
+    }
+
     std::cout << "Starting P2P cryptocurrency simulation...\n";
 
     Simulator simulator(config);
