@@ -1,6 +1,7 @@
 #include "Simulator.h"
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -440,19 +441,29 @@ void Simulator::printSummary() const
     std::cout << "Longest chain length (node 0): " << reference.longestHeight << "\n\n";
 
     std::cout << "Per node (from node 0's view of the longest chain):\n";
-    std::cout << "id  speed  cpu   hashPower  mined  inChain  ratio\n";
+    std::cout << std::left
+              << std::setw(5) << "id"
+              << std::setw(7) << "speed"
+              << std::setw(6) << "cpu"
+              << std::right
+              << std::setw(10) << "hashPower"
+              << std::setw(8) << "mined"
+              << std::setw(9) << "inChain"
+              << std::setw(8) << "ratio" << "\n";
     for (const Node &node : nodes)
     {
         int mined = minedByNode[node.id];
         int inChain = inChainByNode[node.id];
         double ratio = mined > 0 ? static_cast<double>(inChain) / mined : 0.0;
-        std::cout << node.id << "   "
-                  << (node.isFast() ? "Fast" : "Slow") << "   "
-                  << (node.isHighCpu() ? "High" : "Low ") << "   "
-                  << node.hashPower << "   "
-                  << mined << "      "
-                  << inChain << "        "
-                  << ratio << "\n";
+        std::cout << std::left
+                  << std::setw(5) << node.id
+                  << std::setw(7) << (node.isFast() ? "Fast" : "Slow")
+                  << std::setw(6) << (node.isHighCpu() ? "High" : "Low")
+                  << std::right << std::fixed
+                  << std::setw(10) << std::setprecision(4) << node.hashPower
+                  << std::setw(8) << mined
+                  << std::setw(9) << inChain
+                  << std::setw(8) << std::setprecision(2) << ratio << "\n";
     }
 
     int offChain = static_cast<int>(reference.tree.size()) - static_cast<int>(longestChain.size());
